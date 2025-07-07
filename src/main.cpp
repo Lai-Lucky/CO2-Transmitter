@@ -4,12 +4,14 @@
 
  
 #include <Arduino.h>
-#include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h> // 添加 FreeRTOS 头文件
 #include <freertos/task.h>     // 添加 FreeRTOS 任务管理头文件
 #include <freertos/semphr.h>   // 添加 FreeRTOS 信号量头文件
+
+#define M0 23 //M0控制引脚
+#define M1 22 //M1控制引脚
 
 
 /************** 函数声明 ***************/
@@ -17,10 +19,10 @@ uint16_t CRC16(const uint8_t *data, uint16_t length);
 bool checkCRC(const uint8_t *data, uint16_t len);
 void parseModbusData(const uint8_t *data, uint16_t len);
 void sendSensorData(double data) ;
+void ZigBeec_controller(int switchs);
+void sensor_task_vtask(void *pv); //传感器任务
 
-void soilsensor_task_vtask(void *pv); //土壤传感器任务
-
-TaskHandle_t soilsensor_task_handle;  //土壤传感器任务句柄
+TaskHandle_t sensor_task_handle;  //传感器任务句柄
 
 /************* 询问命令 *************/
 const byte send_byte[1][8] = {
@@ -36,10 +38,13 @@ int asr = 0;  // 传感器轮询索引
 
 /************* 程序初始化 *************/
 void setup() {
-  Serial.begin(9600);
+  pinMode(22,OUTPUT);
+  pinMode(23,OUTPUT);
+
+  Serial.begin(115200);
   Serial2.begin(9600);
 
-  xTaskCreate(soilsensor_task_vtask,"soilsensor_task_vtask",4096,NULL,1,&soilsensor_task_handle);//创建土壤传感器任务
+  xTaskCreate(sensor_task_vtask,"sensor_task_vtask",4096,NULL,1,&sensor_task_handle);//创建土壤传感器任务
   
 }
 
@@ -101,14 +106,23 @@ void sendSensorData(double data)
   String payload;
   serializeJson(doc, payload);
 
+   //ZigBee模块全双工
+  ZigBeec_controller(1);
+  vTaskDelay(pdMS_TO_TICKS(200));
+
   Serial.println(payload.c_str());
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  //ZigBee模块休眠
+  ZigBeec_controller(0);
+  vTaskDelay(pdMS_TO_TICKS(200));
 
   vTaskDelay(pdMS_TO_TICKS(100));
 
 }
 
-/********************* 土壤传感器任务 *********************/
-void soilsensor_task_vtask(void *pv){
+/********************* 传感器任务 *********************/
+void sensor_task_vtask(void *pv){
 
   while(1)
   {
@@ -123,8 +137,31 @@ void soilsensor_task_vtask(void *pv){
       int len = Serial2.available();
       Serial2.readBytes(temp, len);
       parseModbusData(temp, len);
-      
+
+     if (checkCRC(temp, len)) 
+      {
+        asr = 0;
+      } 
+
       vTaskDelay(pdMS_TO_TICKS(500));
     }
   }
+}
+
+
+/************ZigBee模块控制************/
+void ZigBeec_controller(int switchs){
+  if(switchs==1)
+  {
+    digitalWrite(M1,LOW);//M1
+    digitalWrite(M0,HIGH);//M0
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+  else
+  {
+    digitalWrite(M1,HIGH);//M1
+    digitalWrite(M0,HIGH);//M0
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+
 }
